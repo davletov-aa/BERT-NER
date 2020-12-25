@@ -4,7 +4,7 @@ from __future__ import absolute_import, division, print_function
 
 import json
 import os
-
+from random import random
 import torch
 import torch.nn.functional as F
 from nltk import word_tokenize
@@ -14,9 +14,19 @@ from pytorch_transformers import (BertConfig, BertForTokenClassification,
 
 class BertNer(BertForTokenClassification):
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.number_of_layers = 13
+        self.attention_to_layers = torch.zeros((self.number_of_layers,), dtype=torch.float32, requires_grad=True)
+        self.attention_to_layers = self.attention_to_layers.new_tensor([random() + 1e-5 for _ in range(self.number_of_layers)])
+
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, valid_ids=None):
-        sequence_output = self.bert(input_ids, token_type_ids, attention_mask, head_mask=None)[0]
-        batch_size,max_len,feat_dim = sequence_output.shape
+        _, hidden_states = self.bert(input_ids, token_type_ids, attention_mask, head_mask=None, output_hidden_states=True)[0]
+        batch_size,max_len,feat_dim = hidden_states[0].shape
+        sequence_output = hidden_states[-1] * self.attention_to_layers[-1]
+        for i in range(self.number_of_layers - 1):
+            sequence_output += hidden_states[i] * self.attention_to_layers[i]
+        hidden_states = None
         valid_output = torch.zeros(batch_size,max_len,feat_dim,dtype=torch.float32,device='cuda' if torch.cuda.is_available() else 'cpu')
         for i in range(batch_size):
             jj = -1
@@ -27,6 +37,20 @@ class BertNer(BertForTokenClassification):
         sequence_output = self.dropout(valid_output)
         logits = self.classifier(sequence_output)
         return logits
+
+    # def forward(self, input_ids, token_type_ids=None, attention_mask=None, valid_ids=None):
+    #     sequence_output = self.bert(input_ids, token_type_ids, attention_mask, head_mask=None, output_hidden_states=True)[0]
+    #     batch_size,max_len,feat_dim = sequence_output.shape
+    #     valid_output = torch.zeros(batch_size,max_len,feat_dim,dtype=torch.float32,device='cuda' if torch.cuda.is_available() else 'cpu')
+    #     for i in range(batch_size):
+    #         jj = -1
+    #         for j in range(max_len):
+    #                 if valid_ids[i][j].item() == 1:
+    #                     jj += 1
+    #                     valid_output[i][jj] = sequence_output[i][j]
+    #     sequence_output = self.dropout(valid_output)
+    #     logits = self.classifier(sequence_output)
+    #     return logits
 
 class Ner:
 
